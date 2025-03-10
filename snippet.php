@@ -1,5 +1,5 @@
 <?php
-
+// Register the custom action class in Ninja Forms
 function custom_ninja_forms_register_mailerlite_action($actions) {
     $actions['mailerlite'] = new NF_MailerLite_Action();
     return $actions;
@@ -32,11 +32,11 @@ if (!class_exists('NF_MailerLite_Action')) {
                 'mailerlite_group_id' => array(
                     'name' => 'mailerlite_group_id',
                     'type' => 'textbox',
-                    'label' => __('MailerLite Group ID (Optional)', 'text-domain'),
+                    'label' => __('MailerLite Group IDs (Comma Separated, Optional)', 'text-domain'),
                     'width' => 'full',
                     'group' => 'primary',
                     'value' => '',
-                    'help' => __('Enter the MailerLite Group ID if you want to add the subscriber to a specific group.', 'text-domain'),
+                    'help' => __('Enter the MailerLite Group IDs if you want to add the subscriber to a specific group. You can specify multiple groups separated by a comma.', 'text-domain'),
                 ),
             );
 
@@ -53,19 +53,114 @@ if (!class_exists('NF_MailerLite_Action')) {
         public function process($action_settings, $form_id, $form_data)
         {
             $api_key = sanitize_text_field($action_settings['mailerlite_api_key'] ?? '');
-            $group_id = sanitize_text_field($action_settings['mailerlite_group_id'] ?? '');
+            $group_id_field = sanitize_text_field( $action_settings['mailerlite_group_id'] ?? '' );
 
             // Extract email and name from form submission
             $fields = $form_data['fields'];
-            $email = '';
+            $id = '';
+			$email = '';
             $name = '';
+			$last_name = '';
+			$church = '';
+			$phone = '';
+			$birth_date = '';
+			$reg_days = [];
+			$payment_type = '';
+			$pay_amount = 0;
+			$ministry_areas = [];
+			$ministry_days = [];
+			$children = '';
+			$zip = '';
+			$city = '';
+			$address = '';
 
             foreach ($fields as $field) {
-                if ($field['key'] == 'email') {
-                    $email = sanitize_email($field['value']);
-                }
-                if ($field['key'] == 'name') {
-                    $name = sanitize_text_field($field['value']);
+				 switch ( $field['key'] ) {
+                    case 'identifier':
+                        $id = sanitize_text_field( $field['value'] );
+                        break;
+                    case 'email':
+                        $email = sanitize_email( $field['value'] );
+                        break;
+                    case 'name':
+                        $name = sanitize_text_field( $field['value'] );
+                        break;
+                    case 'keresztnev':
+                        $last_name = sanitize_text_field( $field['value'] );
+                        break;
+                    case 'church':
+                        $church = sanitize_text_field( $field['value'] );
+                        break;
+                    case 'phone':
+                        $phone = sanitize_text_field( $field['value'] );
+                        break;
+						 
+                    case 'iranyitoszam':
+                        $zip = sanitize_text_field( $field['value'] );
+                        break;
+                    case 'varos':
+                        $city = sanitize_text_field( $field['value'] );
+                        break;
+                    case 'cim':
+                        $address = sanitize_text_field( $field['value'] );
+                        break;
+						 
+                    case 'payment_type':
+                        $payment_type = sanitize_text_field( $field['value'] );
+                        break;
+                    case 'gyerekfelugyelet':
+                        $children = (sanitize_text_field( $field['value'] ) == '1' ? 'igen' : 'nem');
+                        break;
+                    case 'pay_amount':
+                        $pay_amount = intval( $field['value'] );
+                        break;
+                    case 'birth_date':
+                        $date_raw = sanitize_text_field( $field['value'] );
+						 
+                        // Attempt to parse using a couple of common formats.
+                        // Adjust these format strings to match how your form outputs dates.
+                        $date_obj = DateTime::createFromFormat('d/m/Y', $date_raw);
+                        if ( ! $date_obj ) {
+                            $date_obj = DateTime::createFromFormat('Y-m-d', $date_raw);
+                        }
+						if ( ! $date_obj ) {
+                            $date_obj = DateTime::createFromFormat('Y.m.d', $date_raw);
+                        }
+						 
+                        if ( $date_obj ) {
+                            $birth_date = $date_obj->format('Y-m-d');
+                        } else {
+                            error_log("Failed to parse date: " . $date_raw);
+                        }
+						 
+                        break;
+                    case 'reg_days':
+                        // If multiple checkboxes are used, expect an array of values.
+                        if ( is_array( $field['value'] ) ) {
+                            $reg_days = array_map( 'sanitize_text_field', $field['value'] );
+                        } else {
+                            // If not an array, split a comma-separated string.
+                            $reg_days = array_map( 'sanitize_text_field', explode( ',', $field['value'] ) );
+                        }
+                        break;
+                    case 'ministry_days':
+                        // If multiple checkboxes are used, expect an array of values.
+                        if ( is_array( $field['value'] ) ) {
+                            $ministry_days = array_map( 'sanitize_text_field', $field['value'] );
+                        } else {
+                            // If not an array, split a comma-separated string.
+                            $ministry_days = array_map( 'sanitize_text_field', explode( ',', $field['value'] ) );
+                        }
+                        break;
+                    case 'ministry_areas':
+                        // If multiple checkboxes are used, expect an array of values.
+                        if ( is_array( $field['value'] ) ) {
+                            $ministry_areas = array_map( 'sanitize_text_field', $field['value'] );
+                        } else {
+                            // If not an array, split a comma-separated string.
+                            $ministry_areas = array_map( 'sanitize_text_field', explode( ',', $field['value'] ) );
+                        }
+                        break;
                 }
             }
 
@@ -80,11 +175,33 @@ if (!class_exists('NF_MailerLite_Action')) {
             $subscriber_data = [
                 'email' => $email,
                 'name' => $name,
-                'resubscribe' => true, // Allows re-adding if unsubscribed
+                'resubscribe' => false, // Disables re-adding if unsubscribed
+				'fields'      => [
+					'id'            => $id,
+					'last_name'	    => $last_name,
+                    'church'        => $church, 
+					'phone'         => $phone,
+					'zip'           => $zip,
+					'city'          => $city,
+					'address'       => $address,
+					'birthday'      => $birth_date,
+					'payment_type'  => $payment_type,
+					'pay_amount'    => $pay_amount,
+					'children'      => $children,
+					'paid'          => 'false',
+                    'regdays'       => implode( ',', $reg_days ),       // Multiple checkboxes as comma-separated values
+					'ministry_days' => implode( ',', $ministry_days ),  // Multiple checkboxes as comma-separated values
+					'ministries'    => implode( ',', $ministry_areas ), // Multiple checkboxes as comma-separated values
+                ],
             ];
 
-            if (!empty($group_id)) {
-                $subscriber_data['groups'] = [$group_id];
+			 // Process group IDs from a comma-separated list.
+            if ( ! empty( $group_id_field ) ) {
+                $group_ids = array_map( 'trim', explode( ',', $group_id_field ) );
+                $group_ids = array_filter( $group_ids ); // Remove any empty values.
+                if ( ! empty( $group_ids ) ) {
+                    $subscriber_data['groups'] = $group_ids;
+                }
             }
 
             // Send data using WP HTTP API
